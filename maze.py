@@ -1,8 +1,9 @@
 #!/usr/bin/env
 
-from multiprocessing import heap
 from PIL import Image
 import numpy as np
+import xlsxwriter
+import io
 
 import heapq
 
@@ -43,11 +44,12 @@ class Maze(object):
         maze_im = Image.open(maze).quantize(8, method=Image.Quantize.LIBIMAGEQUANT, palette=palette_im, dither=Image.Dither.NONE).convert(mode="RGB")
         self.scaled_maze = maze_im.reduce(5).quantize(8, palette=palette_im).convert(mode="RGB")
         nim = np.array(self.scaled_maze)
+        self.width, self.height = self.scaled_maze.size
         self.maze_arr = np.array([[PIXMAP[tuple(pixel)][0] for pixel in row] for row in nim])
 
-    def find(self, block_type, current_block) -> list:
+    def find(self, block_type, current_block) -> set:
         """Return 5 nearest blocks to current"""
-        return np.asarray(np.where(self.maze_arr == block_type)).T
+        return set(map(tuple, np.asarray(np.where(self.maze_arr == block_type)).T))
 
 
     def _manhattan_distance(self, p1, p2):
@@ -59,8 +61,19 @@ class Maze(object):
     def _astar(self, start, goal):
         # For now our heuristic function is just the manhattan distance
         # TODO: improve heuristic by factoring in treasures, bonfires and fountains
-        h = self._manhattan_distance
-
+        def h(p1, p2):
+            costs = {
+                0: 6,
+                1: 0,
+                2: 6,
+                3: 0,
+                4: 10,
+                5: 2,
+                6: 1,
+                9: 1
+            }
+            return self._manhattan_distance(p1, p2) + (costs[self.maze_arr[p1]] + costs[self.maze_arr[p2]])//2
+        # h = self._manhattan_distance
         # Allowed movements
         # North (-1, 0) South (1, 0) East (0, 1) West (0, -1)
         neighbours = CARDINALS.keys()
@@ -136,6 +149,35 @@ class Maze(object):
         # so there is no path from start to goal
         return []
 
+    def xlsx(self, filename=None, map_route=None):
+        if filename:
+            workbook = xlsxwriter.Workbook(filename)
+        else:
+            output = io.BytesIO()
+            workbook = xlsxwriter.Workbook(output)
+
+        worksheet = workbook.add_worksheet('maze')
+        
+        cell_formats = {}
+
+        for rgb, i in PIXMAP.items():
+            cell_formats[i[0]] = workbook.add_format({'bg_color': "#{:02x}{:02x}{:02x}".format(*rgb)})
+        for i in range(self.height):
+            for j in range(self.width):
+                text = None
+                x = self.maze_arr[i,j]
+                if (i,j) in map_route:
+                    text = "★"
+                worksheet.write(i, j, text, cell_formats[x])
+
+        worksheet.set_column_pixels(0, self.width, 17)
+
+        workbook.close()
+        if filename:
+            return None
+        else:
+            output.seek(0)
+            return output
 
     def __repr__(self) -> str:
         return str(self.maze_arr)
